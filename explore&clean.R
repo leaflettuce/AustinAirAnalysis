@@ -1,0 +1,252 @@
+library(ggplot2)
+library(scales)
+library(gridExtra)
+
+setwd("D:/working files/")
+
+airports <- read.csv("airports.csv")
+airlines <- read.csv("airlines.csv")
+routes <- read.csv("routes.csv")
+
+#Check summaries
+head(airlines)
+str(airlines)
+summary(airlines)
+
+head(airports)
+str(airports)
+summary(airports)
+
+head(routes)
+str(routes)
+summary(routes)
+
+
+###################
+##### CLEAN #######
+###################
+
+##Nonstop check
+Nonstop_routes <- routes[grep(1, routes$Stops), ]
+dim(Nonstop_routes)
+#24 nonstop flights ----> Don't bother
+
+
+###Remove Missing connector values
+routes <- subset(routes, routes$Airline.ID != "\\N")
+routes <- subset(routes, routes$Source.Airport.ID != "\\N")
+routes <- subset(routes, routes$Destination.Airport.ID != "\\N")
+routes <- routes[, 1:9]
+### -> All can connect Now
+
+
+#Check for missing values
+sapply(airports, function(x) sum(is.na(x)))
+
+sapply(airlines, function(x) sum(is.na(x)))
+#2 IATA missing -> Remove
+airlines <- airlines[!(is.na(airlines$IATA)), ]
+
+sapply(routes, function(x) sum(is.na(x)))
+
+
+###Write cleaned data for Positioning
+write.csv(airlines, "airlines_cleaned.csv")
+write.csv(airports, "airports_cleaned.csv")
+write.csv(routes, "routes_cleaned.csv")
+
+
+
+#Merge data into one for exploration and feature generation
+source_airports <- airports
+colnames(source_airports) <- c("Airport.ID", "Source_Name", "Source_City", "Source_Country", 
+                               "Source_IATA", "Source_ICAO", "Source_Lat", "Source_Long", 
+                               "Source_Alt", "Source_TZ", "Source_DST")
+dest_airports <- airports
+colnames(dest_airports) <- c("Airport.ID", "dest_Name", "dest_City", "dest_Country", 
+                               "dest_IATA", "dest_ICAO", "dest_Lat", "dest_Long", 
+                               "dest_Alt", "dest_TZ", "dest_DST")
+
+data <- merge(routes, source_airports, by.x= "Source.Airport.ID", by.y = "Airport.ID")
+data <- merge(data, dest_airports, by.x= "Destination.Airport.ID", by.y = "Airport.ID")
+
+Airline_merge <- airlines
+colnames(Airline_merge) <-c("Airline.ID", "Airline_Name", "Airline_Alias", "Airline_IATA", "Airline_ICAO",
+                            "Airline_Callsign", "Airline_Country", "Airline_Active")
+
+#aggregated dataset
+data <- merge(data, Airline_merge, "Airline.ID")
+
+
+
+#######################
+#### SUBSETTING #######
+#######################
+
+#subset top equipment
+Equip_subset <- data[ data$Equipment %in%  names(table(data$Equipment))[table(data$Equipment) > 500] , ]
+
+#Carrier
+carrier_subset <- data[ data$Airline %in%  names(table(data$Airline))[table(data$Airline) > 700] , ]
+
+#Equipment by Carrier
+Equip_Carrier_subset <- carrier_subset[ carrier_subset$Equipment %in%  names(table(carrier_subset$Equipment))[table(carrier_subset$Equipment) > 200] , ]
+
+
+#From Nigeria Subset
+Nigeria_Source <- subset(data, data$Source_Country == "Nigeria")
+
+#Domestic and International flights from Nigeria
+Nigeria_Dom <- subset(data, data$Source_Country == 'Nigeria' & data$dest_Country == 'Nigeria')
+Nigeria_Inter <- subset(data, data$Source_Country == 'Nigeria' | data$dest_Country == 'Nigeria')
+Nigeria_Inter<-Nigeria_Inter[!(Nigeria_Inter$dest_Country=="Nigeria" & Nigeria_Inter$Source_Country=="Nigeria"),]
+#From Nigeria to others
+Nigeria_Source <- subset(Nigeria_Source, Nigeria_Source$dest_Country != "Nigeria")
+# Add destination count
+Nigeria_Source$dest_Country <- as.character(Nigeria_Source$dest_Country)
+Nigeria_Source$count <- as.numeric(ave(Nigeria_Source$dest_Country, Nigeria_Source$dest_Country, FUN = length))
+#add airline count
+Nigeria_Source$Airline <- as.character(Nigeria_Source$Airline)
+Nigeria_Source$carrier_count <- as.numeric(ave(Nigeria_Source$Airline, Nigeria_Source$Airline, FUN = length))
+#add plane type count
+Nigeria_Source$Equipment <- as.character(Nigeria_Source$Equipment)
+Nigeria_Source$Equip_count <- as.numeric(ave(Nigeria_Source$Equipment, Nigeria_Source$Equipment, FUN = length))
+
+
+#To Nigeria Subset
+Nigeria_dest <- subset(data, data$dest_Country == "Nigeria")
+
+Nigeria_dest <- subset(Nigeria_dest, Nigeria_dest$Source_Country != "Nigeria")
+#To Nigeria from others
+Nigeria_dest$Source_Country <- as.character(Nigeria_dest$Source_Country)
+Nigeria_dest$count <- as.numeric(ave(Nigeria_dest$Source_Country, Nigeria_dest$Source_Country, FUN = length))
+#add source count
+Nigeria_dest$Airline <- as.character(Nigeria_dest$Airline)
+Nigeria_dest$carrier_count <- as.numeric(ave(Nigeria_dest$Airline, Nigeria_dest$Airline, FUN = length))
+#add airline count
+Nigeria_dest$Equipment <- as.character(Nigeria_dest$Equipment)
+Nigeria_dest$Equip_count <- as.numeric(ave(Nigeria_dest$Equipment, Nigeria_dest$Equipment, FUN = length))
+#add plane type count
+
+
+
+
+#####################
+######## EDA ########
+#####################
+
+#equipment histogram
+g1 <-ggplot(aes(x = Equipment), data = Equip_subset) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Most Popular Plane Types (Overall)') +
+  xlab('Plane Type') + 
+  ylab('Count')
+
+g2 <-ggplot(aes(x = Equipment), data = Equip_Carrier_subset) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Most Popular Plane Types (Top Carriers)') +
+  xlab('Plane Type') + 
+  ylab('Count')
+
+grid.arrange(g1, g2, ncol = 1)
+
+#Carriers
+ggplot(aes(x = Airline), data = carrier_subset) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Top Airlines') +
+  xlab('Airline') + 
+  ylab('Count')
+
+
+
+#Flights to
+i1 <- ggplot(aes(x = dest_Country), data = subset(Nigeria_Source, Nigeria_Source$count > 1)) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Most Frequently International Flights From Nigeria') +
+  xlab('Destination Country') + 
+  ylab('Count')
+
+#Airlines
+a1 <- ggplot(aes(x = Airline), data = subset(Nigeria_Source, Nigeria_Source$carrier_count > 2)) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Top Carrier From Nigeria') +
+  xlab('Carrier') + 
+  ylab('Count')
+
+#Equipment
+e1 <- ggplot(aes(x = Equipment), data = subset(Nigeria_Source, Nigeria_Source$Equip_count > 2)) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Top Plane Types From Nigeria') +
+  xlab('Plane Type') + 
+  ylab('Count')
+
+
+#Flights
+i2 <- ggplot(aes(x = Source_Country), data = subset(Nigeria_dest, Nigeria_dest$count > 1)) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Most Frequently International Flights To Nigeria') +
+  xlab('Source Country') + 
+  ylab('Count')
+
+#Airlines
+a2 <-ggplot(aes(x = Airline), data = subset(Nigeria_dest, Nigeria_dest$carrier_count > 2)) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Top Carrier To Nigeria') +
+  xlab('Carrier') + 
+  ylab('Count')
+
+
+#Equipment
+e2 <- ggplot(aes(x = Equipment), data = subset(Nigeria_dest, Nigeria_dest$Equip_count > 2)) +
+  geom_histogram(stat = 'count') +
+  ggtitle('Top Plane Types To Nigeria') +
+  xlab('Plane Type') + 
+  ylab('Count')
+
+
+#SOURCE/DEST to/from Nigeria
+grid.arrange(i1, i2, ncol = 1)
+#Airlines TO AND GFROM NIGERIA
+grid.arrange(a1, a2, ncol = 1)
+#PLANE TYPES TO AND GFROM NIGERIA
+grid.arrange(e1, e2, ncol = 1)
+
+#Plane Types per E and W Airline
+data$Airline <- as.character(data$Airline)
+data$Equipment <- as.character(data$Equipment)
+
+E_subset$Equipment <- as.character(E_subset$Equipment)
+E_subset$count <- as.numeric(ave(E_subset$Equipment, E_subset$Equipment, FUN = length))
+
+
+
+
+#############
+### STATS ###
+##############
+
+##NIGERIA RATIO
+total_flight_count <- nrow(Nigeria_Dom) + nrow(Nigeria_Inter)
+
+ratio <- matrix(c(nrow(Nigeria_Dom), nrow(Nigeria_Inter),
+                  format(round(nrow(Nigeria_Dom)/total_flight_count*100, 2), nsmall = 2),
+                  format(round(nrow(Nigeria_Inter)/total_flight_count*100, 2), nsmall = 2)),
+                ncol=2,byrow=TRUE)
+colnames(ratio) <- c("Domestic","International")
+rownames(ratio) <- c("Count","Percent")
+
+print(ratio)
+pdf("ratio_output.pdf", height=.85, width=2.85)
+grid.table(ratio)
+dev.off()
+
+#TEST COR
+library('corrplot')
+cor_data <- cor(data)
+
+Nigeria_both <- subset(data, data$Source_Country == "Nigeria" | data$dest_Country == "Nigeria")
+
+##REGRESSION NOT REALISTIC
+#write.csv(Nigeria_Dom, "domestic_data.csv")
+#write.csv(Nigeria_Inter, "inter_data.csv")
+#write.csv(Nigeria_both, "both_data.csv")
